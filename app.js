@@ -3,6 +3,7 @@
       const USERS_KEY = "clothing_store_users_v1";
       const SESSION_KEY = "clothing_store_session_v1";
       const SHEETS_URL_KEY = "clothing_store_sheets_url_v1";
+      const DEFAULT_SHEETS_URL = "https://script.google.com/macros/s/AKfycbxR_Dg6D-tcKGc9GLX-sfvY2Fja__jlTpc1SYbnj2YskR0JMTFZUeHhD8e75BORRiOSGA/exec";
       const LAST_SYNC_KEY = "clothing_store_last_sync_v1";
       const CLOUD_VERSION_KEY = "clothing_store_cloud_version_v1";
       const CLIENT_ID_KEY = "clothing_store_client_id_v1";
@@ -599,7 +600,7 @@
       }
 
       function getSheetsUrl() {
-        return localStorage.getItem(SHEETS_URL_KEY) || "";
+        return localStorage.getItem(SHEETS_URL_KEY) || DEFAULT_SHEETS_URL || "";
       }
 
       function openSettings() {
@@ -620,7 +621,8 @@
         const url = document.getElementById("gs-url").value.trim();
         if (url && !url.startsWith("https://script.google.com/"))
           return toast("⚠ رابط Apps Script غير صحيح");
-        localStorage.setItem(SHEETS_URL_KEY, url);
+        if (url && url !== DEFAULT_SHEETS_URL) localStorage.setItem(SHEETS_URL_KEY, url);
+        else localStorage.removeItem(SHEETS_URL_KEY);
         const val = (id) => document.getElementById(id)?.value.trim() || "";
         setAppSetting("currency", val("set-currency") || "EGP");
         setAppSetting("defaultMinQty", val("set-minqty") || "3");
