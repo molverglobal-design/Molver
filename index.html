@@ -193,6 +193,7 @@
             <div style="display: flex; gap: 6px; align-items: center">
               <button
                 class="btn btn-sm"
+                data-action="export"
                 data-icon="⇩"
                 onclick="exportData()"
                 title="تصدير نسخة احتياطية"
@@ -201,6 +202,7 @@
               </button>
               <button
                 class="btn btn-sm"
+                data-action="import"
                 data-icon="⇧"
                 onclick="importData()"
                 title="استيراد بيانات"
@@ -209,6 +211,7 @@
               </button>
               <button
                 class="btn btn-sm"
+                data-action="syncCloud"
                 data-icon="↻"
                 onclick="syncToCloud(true)"
                 title="مزامنة مع Google Sheets"
@@ -217,6 +220,7 @@
               </button>
               <button
                 class="btn btn-sm"
+                data-action="connectionSettings"
                 data-icon="⚙"
                 onclick="openSettings()"
                 title="إعدادات الربط"

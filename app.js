@@ -110,6 +110,8 @@
             "print",
             "export",
             "import",
+            "syncCloud",
+            "connectionSettings",
             "viewProfit",
             "expense",
             "importItems",
@@ -426,6 +428,10 @@
               !(currentUser && currentUser.role === "owner"),
             ),
           );
+        document.querySelectorAll("[data-action]").forEach((el) => {
+          const action = el.dataset.action;
+          el.classList.toggle("hidden", !!currentUser && action && !can(action));
+        });
       }
 
       function renderPageChecks(selected = "all") {
@@ -449,6 +455,8 @@
         print: "الطباعة",
         export: "تصدير/نسخ احتياطي",
         import: "استيراد/تحميل",
+        syncCloud: "مزامنة الآن",
+        connectionSettings: "إعدادات الربط",
         importItems: "استيراد أصناف CSV",
         viewProfit: "مشاهدة الربح",
         expense: "إدارة المصروفات",
@@ -468,7 +476,7 @@
           "عمليات البيع": ["sale", "barcodeSale", "shipping", "return", "approveRisk"],
           "المخزون والمشتريات": ["item", "purchase", "supplier", "importItems", "printLabels", "clearStockMoves"],
           "الحسابات": ["customer", "expense", "archive", "brand"],
-          "إدارة وتحكم": ["delete", "print", "export", "import", "viewProfit", "unlockClosing", "manageUsers"],
+          "إدارة وتحكم": ["delete", "print", "export", "import", "syncCloud", "connectionSettings", "viewProfit", "unlockClosing", "manageUsers"],
         };
         wrap.innerHTML = Object.entries(groups).map(([group, ids]) => {
           const checks = ids
@@ -604,8 +612,7 @@
       }
 
       function openSettings() {
-        if (currentUser && currentUser.role !== "owner")
-          return toast("⚠ إعدادات الربط للمالك فقط");
+        if (currentUser && !requireAction("connectionSettings")) return;
         document.getElementById("gs-url").value = getSheetsUrl();
         const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
         set("set-currency", appSetting("currency", "EGP"));
@@ -618,6 +625,7 @@
       }
 
       function saveSettings() {
+        if (currentUser && !requireAction("connectionSettings")) return;
         const url = document.getElementById("gs-url").value.trim();
         if (url && !url.startsWith("https://script.google.com/"))
           return toast("⚠ رابط Apps Script غير صحيح");
@@ -651,8 +659,10 @@
           if (manual) toast("⚠ أضف رابط Google Sheets من زر الربط أولاً");
           return;
         }
-        if (currentUser && !can("export"))
-          return toast("⚠ لا تملك صلاحية المزامنة");
+        if (currentUser && !can("syncCloud")) {
+          if (manual) toast("⚠ لا تملك صلاحية المزامنة");
+          return;
+        }
         try {
           setSyncState("syncing", "جاري المزامنة مع Google Sheets...");
           const frameName = "gs_sync_frame";
