@@ -653,6 +653,146 @@
         syncTimer = setTimeout(() => syncToCloud(false), 1200);
       }
 
+      function emptyDB() {
+        return {
+          items: [],
+          customers: [],
+          suppliers: [],
+          sales: [],
+          purchases: [],
+          returns: [],
+          onlineOrders: [],
+          expenses: [],
+          activityLog: [],
+          archivedRecords: [],
+          brandSettings: [],
+        };
+      }
+
+      function defaultCounters() {
+        return { item: 1, sale: 1, pur: 1, ret: 1, cust: 1, sup: 1, online: 1, exp: 1 };
+      }
+
+      function rowKey(type, row) {
+        if (!row) return "";
+        if (type === "items") return row.code || "";
+        if (type === "brandSettings") return row.key || "";
+        if (type === "users") return row.login || "";
+        return row.id || row.code || row.login || row.key || "";
+      }
+
+      function rowStamp(row) {
+        if (!row) return 0;
+        const value = row.updatedAt || row.archivedAt || row.date || row.createdAt || row.savedAt || "";
+        const ts = value ? new Date(value).getTime() : 0;
+        return Number.isFinite(ts) ? ts : 0;
+      }
+
+      function trashKeys(archiveRows) {
+        const set = new Set();
+        (archiveRows || []).forEach((r) => {
+          if (!r || !r.type || !r.refId) return;
+          if (String(r.id || "").startsWith("TRASH-")) set.add(`${r.type}:${r.refId}`);
+        });
+        return set;
+      }
+
+      function mergeRows(type, localRows = [], cloudRows = [], deleted = new Set()) {
+        const map = new Map();
+        [...cloudRows, ...localRows].forEach((row) => {
+          const key = rowKey(type, row);
+          if (!key) return;
+          if (type !== "archivedRecords" && deleted.has(`${type}:${key}`)) return;
+          const prev = map.get(key);
+          if (!prev || rowStamp(row) >= rowStamp(prev)) map.set(key, row);
+        });
+        return [...map.values()];
+      }
+
+      function mergeCounters(localCnt = {}, cloudCnt = {}) {
+        const merged = { ...defaultCounters() };
+        Object.keys(merged).forEach((key) => {
+          merged[key] = Math.max(+localCnt[key] || 1, +cloudCnt[key] || 1);
+        });
+        return merged;
+      }
+
+      function mergeCloudData(localData, cloudData) {
+        const localDB = { ...emptyDB(), ...(localData.DB || {}) };
+        const cloudDB = { ...emptyDB(), ...(cloudData.DB || {}) };
+        const archive = mergeRows("archivedRecords", localDB.archivedRecords, cloudDB.archivedRecords);
+        const deleted = trashKeys(archive);
+        const mergedDB = emptyDB();
+        Object.keys(mergedDB).forEach((type) => {
+          mergedDB[type] = type === "archivedRecords"
+            ? archive
+            : mergeRows(type, localDB[type], cloudDB[type], deleted);
+        });
+        return {
+          DB: mergedDB,
+          CNT: mergeCounters(localData.CNT || {}, cloudData.CNT || {}),
+          USERS: mergeRows("users", localData.USERS || [], cloudData.USERS || []),
+          meta: cloudData.meta || {},
+        };
+      }
+
+      function loadCloudSnapshot(onDone, onError) {
+        const url = getSheetsUrl();
+        const cb = "gs_merge_" + Date.now();
+        window[cb] = (data) => {
+          try {
+            onDone(data || {});
+          } finally {
+            delete window[cb];
+            document.getElementById(cb)?.remove();
+          }
+        };
+        const s = document.createElement("script");
+        s.id = cb;
+        s.src = url + (url.includes("?") ? "&" : "?") + "action=loadAll&callback=" + cb + "&t=" + Date.now();
+        s.onerror = () => {
+          delete window[cb];
+          s.remove();
+          if (onError) onError();
+        };
+        document.body.appendChild(s);
+      }
+
+      function postCloudPayload(url, payload, manual) {
+        const frameName = "gs_sync_frame";
+        let frame = document.getElementById(frameName);
+        if (!frame) {
+          frame = document.createElement("iframe");
+          frame.name = frameName;
+          frame.id = frameName;
+          frame.className = "hidden";
+          document.body.appendChild(frame);
+        }
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = url;
+        form.target = frameName;
+        form.className = "hidden";
+        const input = document.createElement("input");
+        input.name = "payload";
+        input.value = JSON.stringify({
+          action: "saveAll",
+          payload,
+          updatedAt: new Date().toISOString(),
+        });
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        form.remove();
+        setTimeout(() => {
+          const syncMessage = "تم دمج البيانات وإرسالها إلى Google Sheets ✓";
+          setSyncState("ok", syncMessage);
+          markLastSync();
+          if (payload.meta && payload.meta.cloudVersion) localStorage.setItem(CLOUD_VERSION_KEY, payload.meta.cloudVersion);
+          if (manual) toast(syncMessage);
+        }, 1200);
+      }
+
       function syncToCloud(manual = false) {
         const url = getSheetsUrl();
         if (!url) {
@@ -664,38 +804,31 @@
           return;
         }
         try {
-          setSyncState("syncing", "جاري المزامنة مع Google Sheets...");
-          const frameName = "gs_sync_frame";
-          let frame = document.getElementById(frameName);
-          if (!frame) {
-            frame = document.createElement("iframe");
-            frame.name = frameName;
-            frame.id = frameName;
-            frame.className = "hidden";
-            document.body.appendChild(frame);
-          }
-          const form = document.createElement("form");
-          form.method = "POST";
-          form.action = url;
-          form.target = frameName;
-          form.className = "hidden";
-          const input = document.createElement("input");
-          input.name = "payload";
-          input.value = JSON.stringify({
-            action: "saveAll",
-            payload: { DB, CNT, USERS, meta: { clientId: clientId(), baseCloudVersion: localStorage.getItem(CLOUD_VERSION_KEY) || "" } },
-            updatedAt: new Date().toISOString(),
+          setSyncState("syncing", "جاري دمج بيانات الأجهزة مع Google Sheets...");
+          const localData = { DB, CNT, USERS };
+          loadCloudSnapshot((cloudData) => {
+            const merged = mergeCloudData(localData, cloudData);
+            DB = merged.DB;
+            CNT = merged.CNT;
+            USERS = merged.USERS && merged.USERS.length ? merged.USERS : USERS;
+            const payload = {
+              DB,
+              CNT,
+              USERS,
+              meta: {
+                clientId: clientId(),
+                baseCloudVersion: localStorage.getItem(CLOUD_VERSION_KEY) || "",
+                cloudVersion: cloudData.meta && cloudData.meta.cloudVersion ? cloudData.meta.cloudVersion : "",
+              },
+            };
+            localStorage.setItem(STORE_KEY, JSON.stringify({ DB, CNT }));
+            localStorage.setItem(USERS_KEY, JSON.stringify(USERS));
+            renderAll();
+            postCloudPayload(url, payload, manual);
+          }, () => {
+            setSyncState("error", "فشل تحميل نسخة الشيت قبل الدمج");
+            if (manual) toast("⚠ فشل الدمج. جرّب تحميل من الشيت ثم مزامنة");
           });
-          form.appendChild(input);
-          document.body.appendChild(form);
-          form.submit();
-          form.remove();
-          setTimeout(() => {
-            const syncMessage = "تم إرسال البيانات إلى Google Sheets ✓";
-            setSyncState("ok", syncMessage);
-            markLastSync();
-            if (manual) toast(syncMessage + " - افتح الشيت للتأكد");
-          }, 1200);
         } catch (e) {
           setSyncState("error", "فشل الاتصال بـ Google Sheets");
           if (manual) toast("⚠ فشل الاتصال برابط Google Sheets");
