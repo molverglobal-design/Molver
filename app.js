@@ -8,6 +8,7 @@
       const CLOUD_VERSION_KEY = "clothing_store_cloud_version_v1";
       const CLIENT_ID_KEY = "clothing_store_client_id_v1";
       const LOCAL_BACKUPS_KEY = "clothing_store_local_daily_backups_v1";
+      const ONBOARDING_KEY = "molver_onboarding_seen_v1";
 
       let DB = {
         items: [],
@@ -29,6 +30,8 @@
       let USERS = [];
       let currentUser = null;
       let syncTimer = null;
+      let cloudPullTimer = null;
+      let cloudBusy = false;
       let decorateTimer = null;
       let tableObserver = null;
       let dashboardMetric = "sales";
@@ -216,6 +219,14 @@
       function roleDef(role) {
         return ROLE_DEFS[role] || ROLE_DEFS.viewer;
       }
+      function applyUserPreset(role) {
+        const def = roleDef(role);
+        const roleEl = document.getElementById("u-role");
+        if (roleEl) roleEl.value = role;
+        renderPageChecks(def.pages);
+        renderActionChecks(def.actions);
+        toast("✓ تم تطبيق قالب " + def.label);
+      }
       function userPages(user) {
         if (!user) return [];
         if (user.role === "owner" || user.pages === "all") return "all";
@@ -345,6 +356,7 @@
           logActivity("تسجيل خروج", "النظام", activeUserName());
           saveDB();
         }
+        stopAutoCloudPull();
         localStorage.removeItem(SESSION_KEY);
         currentUser = null;
         setAuthMode("logout");
@@ -369,6 +381,9 @@
         document.getElementById("current-user-chip").textContent =
           `${currentUser.name} - ${roleDef(currentUser.role).label}`;
         renderAll();
+        showOnboardingOnce();
+        if (getSheetsUrl()) setTimeout(() => loadFromCloud(false), 700);
+        startAutoCloudPull();
         const active = document.querySelector(".nav-item.active");
         const page = getNavPage(active);
         if (!canPage(page))
@@ -649,8 +664,85 @@
 
       function scheduleCloudSync() {
         if (!getSheetsUrl()) return;
+        if (navigator.onLine === false) {
+          updateConnectionUi();
+          return;
+        }
         clearTimeout(syncTimer);
         syncTimer = setTimeout(() => syncToCloud(false), 1200);
+      }
+
+      function canAutoPullCloud() {
+        if (!currentUser || !getSheetsUrl()) return false;
+        if (document.visibilityState && document.visibilityState !== "visible") return false;
+        if (!document.getElementById("auth-screen")?.classList.contains("hidden")) return false;
+        if (document.querySelector(".overlay.open")) return false;
+        const active = document.activeElement;
+        if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) return false;
+        return true;
+      }
+
+      function startAutoCloudPull() {
+        stopAutoCloudPull();
+        if (!getSheetsUrl()) return;
+        cloudPullTimer = setInterval(() => {
+          if (canAutoPullCloud()) loadFromCloud(false, true);
+        }, 6000);
+      }
+
+      function stopAutoCloudPull() {
+        if (cloudPullTimer) clearInterval(cloudPullTimer);
+        cloudPullTimer = null;
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (canAutoPullCloud()) setTimeout(() => loadFromCloud(false, true), 500);
+      });
+
+      window.addEventListener("focus", () => {
+        if (canAutoPullCloud()) setTimeout(() => loadFromCloud(false, true), 500);
+      });
+
+      function updateConnectionUi() {
+        const offline = navigator.onLine === false;
+        document.getElementById("offline-banner")?.classList.toggle("hidden", !offline);
+        const chip = document.getElementById("live-sync-chip");
+        if (chip && offline) {
+          chip.textContent = "Offline - محفوظ محلياً";
+          chip.className = "live-sync-chip offline";
+        }
+      }
+
+      window.addEventListener("online", () => {
+        updateConnectionUi();
+        toast("✓ رجع الإنترنت - جاري المزامنة");
+        syncToCloud(false);
+        setTimeout(() => loadFromCloud(false, true), 2500);
+      });
+
+      window.addEventListener("offline", () => {
+        updateConnectionUi();
+        toast("⚠ أوفلاين - الحفظ مؤقت على الجهاز");
+      });
+
+      function repairSync() {
+        if (!requireAction("syncCloud")) return;
+        if (!getSheetsUrl()) return toast("⚠ لا يوجد رابط Google Sheets");
+        if (navigator.onLine === false) return toast("⚠ أنت أوفلاين حالياً");
+        setSyncState("syncing", "إصلاح المزامنة: تحميل ودمج...");
+        loadFromCloud(false);
+        setTimeout(() => {
+          setSyncState("syncing", "إصلاح المزامنة: رفع النسخة المدموجة...");
+          syncToCloud(true);
+        }, 2800);
+      }
+
+      function showOnboardingOnce() {
+        if (localStorage.getItem(ONBOARDING_KEY)) return;
+        localStorage.setItem(ONBOARDING_KEY, "1");
+        setTimeout(() => {
+          toast("ابدأ سريعاً: اضبط البراند، أضف موظف، أضف صنف، ثم راقب Live sync", 5200);
+        }, 900);
       }
 
       function emptyDB() {
@@ -736,6 +828,17 @@
         };
       }
 
+      function changedInventorySummary(beforeItems, afterItems) {
+        const before = new Map((beforeItems || []).map((i) => [i.code, i]));
+        const changes = [];
+        (afterItems || []).forEach((item) => {
+          const old = before.get(item.code);
+          if (!old) changes.push(`صنف جديد: ${item.name || item.code}`);
+          else if (+old.qty !== +item.qty) changes.push(`${item.name || item.code}: ${old.qty} ← ${item.qty}`);
+        });
+        return changes.slice(0, 3);
+      }
+
       function loadCloudSnapshot(onDone, onError) {
         const url = getSheetsUrl();
         const cb = "gs_merge_" + Date.now();
@@ -790,20 +893,28 @@
           markLastSync();
           if (payload.meta && payload.meta.cloudVersion) localStorage.setItem(CLOUD_VERSION_KEY, payload.meta.cloudVersion);
           if (manual) toast(syncMessage);
+          cloudBusy = false;
         }, 1200);
       }
 
       function syncToCloud(manual = false) {
+        if (cloudBusy) return;
         const url = getSheetsUrl();
         if (!url) {
           if (manual) toast("⚠ أضف رابط Google Sheets من زر الربط أولاً");
           return;
         }
-        if (currentUser && !can("syncCloud")) {
+        if (navigator.onLine === false) {
+          updateConnectionUi();
+          if (manual) toast("⚠ أنت أوفلاين. سيتم الرفع عند رجوع الإنترنت");
+          return;
+        }
+        if (manual && currentUser && !can("syncCloud")) {
           if (manual) toast("⚠ لا تملك صلاحية المزامنة");
           return;
         }
         try {
+          cloudBusy = true;
           setSyncState("syncing", "جاري دمج بيانات الأجهزة مع Google Sheets...");
           const localData = { DB, CNT, USERS };
           loadCloudSnapshot((cloudData) => {
@@ -826,10 +937,12 @@
             renderAll();
             postCloudPayload(url, payload, manual);
           }, () => {
+            cloudBusy = false;
             setSyncState("error", "فشل تحميل نسخة الشيت قبل الدمج");
             if (manual) toast("⚠ فشل الدمج. جرّب تحميل من الشيت ثم مزامنة");
           });
         } catch (e) {
+          cloudBusy = false;
           setSyncState("error", "فشل الاتصال بـ Google Sheets");
           if (manual) toast("⚠ فشل الاتصال برابط Google Sheets");
         }
@@ -873,57 +986,44 @@
         document.body.appendChild(s);
       }
 
-      function loadFromCloud(manual = false) {
+      function loadFromCloud(manual = false, silent = false) {
+        if (cloudBusy) return;
         const url = getSheetsUrl();
         if (!url) {
           if (manual) toast("⚠ أضف رابط Google Sheets أولاً");
           return;
         }
-        if (currentUser && !can("import"))
+        if (navigator.onLine === false) {
+          updateConnectionUi();
+          if (manual) toast("⚠ أنت أوفلاين حالياً");
+          return;
+        }
+        if (manual && currentUser && !can("import"))
           return toast("⚠ لا تملك صلاحية التحميل");
         const cb = "gs_cb_" + Date.now();
-        setSyncState("syncing", "جاري التحميل من Google Sheets...");
+        cloudBusy = true;
+        if (!silent) setSyncState("syncing", "جاري التحميل من Google Sheets...");
         window[cb] = (data) => {
           try {
-            DB = {
-              items: [],
-              customers: [],
-              suppliers: [],
-              sales: [],
-              purchases: [],
-              returns: [],
-              onlineOrders: [],
-              expenses: [],
-              activityLog: [],
-              archivedRecords: [],
-              brandSettings: [],
-              ...(data.DB || {}),
-            };
-            CNT = {
-              item: 1,
-              sale: 1,
-              pur: 1,
-              ret: 1,
-              cust: 1,
-              sup: 1,
-              online: 1,
-              exp: 1,
-              ...(data.CNT || {}),
-            };
-            if (data.USERS && data.USERS.length) {
-              USERS = data.USERS;
-              localStorage.setItem(USERS_KEY, JSON.stringify(USERS));
-            }
+            const beforeItems = DB.items || [];
+            const merged = mergeCloudData({ DB, CNT, USERS }, data || {});
+            DB = merged.DB;
+            CNT = merged.CNT;
+            if (merged.USERS && merged.USERS.length) USERS = merged.USERS;
+            localStorage.setItem(USERS_KEY, JSON.stringify(USERS));
             if (data.meta && data.meta.cloudVersion) localStorage.setItem(CLOUD_VERSION_KEY, data.meta.cloudVersion);
             localStorage.setItem(STORE_KEY, JSON.stringify({ DB, CNT }));
             renderAll();
-            setSyncState("ok", "تم التحميل من Google Sheets ✓");
+            const invChanges = changedInventorySummary(beforeItems, DB.items || []);
+            if (silent && invChanges.length) toast("تحديث مخزون من جهاز آخر: " + invChanges.join(" | "), 3600);
+            if (!silent) setSyncState("ok", "تم تحميل ودمج بيانات Google Sheets ✓");
             markLastSync();
-            if (manual) toast("✓ تم تحميل البيانات من الشيت");
+            if (manual) toast("✓ تم تحميل ودمج بيانات الشيت");
           } catch (e) {
-            setSyncState("error", "تعذر قراءة بيانات الشيت");
+            if (!silent) setSyncState("error", "تعذر قراءة بيانات الشيت");
             if (manual) toast("⚠ بيانات الشيت غير صحيحة");
           } finally {
+            cloudBusy = false;
             delete window[cb];
             document.getElementById(cb)?.remove();
           }
@@ -938,7 +1038,8 @@
           "&t=" +
           Date.now();
         s.onerror = () => {
-          setSyncState("error", "فشل تحميل بيانات Google Sheets");
+          cloudBusy = false;
+          if (!silent) setSyncState("error", "فشل تحميل بيانات Google Sheets");
           if (manual) toast("⚠ فشل التحميل من الشيت");
           delete window[cb];
           s.remove();
@@ -1118,10 +1219,22 @@
       function setSyncState(s, txt) {
         const dot = document.getElementById("sync-dot");
         const el = document.getElementById("sync-txt");
+        const chip = document.getElementById("live-sync-chip");
         dot.className =
           "sync-dot" +
           (s === "syncing" ? " syncing" : s === "error" ? " error" : "");
         if (el) el.textContent = txt || (s === "error" ? "حدث خطأ في المزامنة" : "تم تحديث حالة المزامنة");
+        if (chip && navigator.onLine !== false) {
+          chip.className = "live-sync-chip" + (s === "syncing" ? " syncing" : s === "error" ? " error" : "");
+          const last = localStorage.getItem(LAST_SYNC_KEY);
+          const ago = last ? Math.max(0, Math.round((Date.now() - new Date(last).getTime()) / 1000)) : null;
+          chip.textContent = s === "syncing"
+            ? "Live sync - جاري التحديث"
+            : s === "error"
+              ? "Live sync - يحتاج مراجعة"
+              : "Live sync" + (ago !== null ? ` - آخر تحديث ${ago}ث` : "");
+        }
+        updateConnectionUi();
         updateLastSyncLabel();
       }
 

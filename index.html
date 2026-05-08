@@ -8,7 +8,7 @@
       href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&family=Tajawal:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260507-sync-merge" />
+    <link rel="stylesheet" href="styles.css?v=20260508-fast-sync" />
   </head>
   <body>
     <div class="auth-screen auth-login-mode" id="auth-screen">
@@ -220,6 +220,24 @@
               </button>
               <button
                 class="btn btn-sm"
+                data-action="import"
+                data-icon="⇣"
+                onclick="loadFromCloud(true)"
+                title="تحميل ودمج بيانات Google Sheets"
+              >
+                ⬇️ تحميل الشيت
+              </button>
+              <button
+                class="btn btn-sm"
+                data-action="syncCloud"
+                data-icon="⛑"
+                onclick="repairSync()"
+                title="إصلاح مشاكل المزامنة"
+              >
+                إصلاح المزامنة
+              </button>
+              <button
+                class="btn btn-sm"
                 data-action="connectionSettings"
                 data-icon="⚙"
                 onclick="openSettings()"
@@ -237,6 +255,7 @@
                 وضع احترافي
               </button>
               <span class="user-chip" id="current-user-chip">—</span>
+              <span class="live-sync-chip" id="live-sync-chip">Live sync</span>
               <button class="btn btn-sm logout-btn" data-icon="⏻" onclick="logout()" title="خروج">خروج</button>
               <span
                 style="font-size: 11px; color: var(--text3)"
@@ -246,6 +265,9 @@
           </div>
         </div>
         <div class="content" id="content">
+          <div class="offline-banner hidden" id="offline-banner">
+            أوفلاين الآن - سيتم حفظ العمليات على الجهاز ورفعها تلقائياً عند رجوع الإنترنت.
+          </div>
           <!-- DASHBOARD -->
           <div class="page active" id="page-dashboard">
             <div class="stats-grid">
@@ -1557,6 +1579,16 @@
             </select>
           </div>
           <div class="form-group form-full">
+            <label>قوالب صلاحيات سريعة</label>
+            <div class="preset-row">
+              <button class="btn btn-sm" type="button" onclick="applyUserPreset('sales')">كاشير</button>
+              <button class="btn btn-sm" type="button" onclick="applyUserPreset('stock')">مخزون</button>
+              <button class="btn btn-sm" type="button" onclick="applyUserPreset('manager')">مدير فرع</button>
+              <button class="btn btn-sm" type="button" onclick="applyUserPreset('viewer')">مشاهدة فقط</button>
+              <button class="btn btn-sm" type="button" onclick="applyUserPreset('owner')">مالك</button>
+            </div>
+          </div>
+          <div class="form-group form-full">
             <label>الصفحات التي تظهر لهذا المستخدم</label>
             <div class="perm-section">
               <div class="perm-section-head">
@@ -1668,6 +1700,6 @@
         pointer-events: none;
       "
     ></div>
-    <script src="app.js?v=20260507-sync-merge"></script>
+    <script src="app.js?v=20260508-fast-sync"></script>
   </body>
 </html>
