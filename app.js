@@ -687,7 +687,7 @@
         if (!getSheetsUrl()) return;
         cloudPullTimer = setInterval(() => {
           if (canAutoPullCloud()) loadFromCloud(false, true);
-        }, 6000);
+        }, 20000);
       }
 
       function stopAutoCloudPull() {
@@ -837,6 +837,10 @@
           else if (+old.qty !== +item.qty) changes.push(`${item.name || item.code}: ${old.qty} ← ${item.qty}`);
         });
         return changes.slice(0, 3);
+      }
+
+      function dataSignature(db = DB, cnt = CNT, users = USERS) {
+        return JSON.stringify({ DB: db, CNT: cnt, USERS: users });
       }
 
       function loadCloudSnapshot(onDone, onError) {
@@ -1006,7 +1010,14 @@
         window[cb] = (data) => {
           try {
             const beforeItems = DB.items || [];
+            const beforeSignature = dataSignature();
             const merged = mergeCloudData({ DB, CNT, USERS }, data || {});
+            const afterSignature = dataSignature(merged.DB, merged.CNT, merged.USERS && merged.USERS.length ? merged.USERS : USERS);
+            if (silent && beforeSignature === afterSignature) {
+              if (data.meta && data.meta.cloudVersion) localStorage.setItem(CLOUD_VERSION_KEY, data.meta.cloudVersion);
+              markLastSync();
+              return;
+            }
             DB = merged.DB;
             CNT = merged.CNT;
             if (merged.USERS && merged.USERS.length) USERS = merged.USERS;
@@ -1015,7 +1026,7 @@
             localStorage.setItem(STORE_KEY, JSON.stringify({ DB, CNT }));
             renderAll();
             const invChanges = changedInventorySummary(beforeItems, DB.items || []);
-            if (silent && invChanges.length) toast("تحديث مخزون من جهاز آخر: " + invChanges.join(" | "), 3600);
+            if (silent && invChanges.length) setSyncState("ok", "تم تحديث بيانات من جهاز آخر ✓");
             if (!silent) setSyncState("ok", "تم تحميل ودمج بيانات Google Sheets ✓");
             markLastSync();
             if (manual) toast("✓ تم تحميل ودمج بيانات الشيت");
