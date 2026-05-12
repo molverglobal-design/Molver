@@ -236,7 +236,7 @@
       function can(action) {
         if (!currentUser) return false;
         if (currentUser.role === "owner") return true;
-        const storedUser = USERS.find((u) => u.login === currentUser.login);
+        const storedUser = USERS.find((u) => String(u.login || "").trim().toLowerCase() === String(currentUser.login || "").trim().toLowerCase());
         if (storedUser && Array.isArray(storedUser.actions)) {
           return storedUser.actions.includes(action);
         }
@@ -305,7 +305,8 @@
         if (title) title.textContent = mode === "logout" ? "ارجع للسيستم" : "افتح ورديتك";
       }
       function selectLoginUser(loginName) {
-        const user = USERS.find((u) => u.login === loginName || u.role === loginName);
+        const wanted = String(loginName || "").trim().toLowerCase();
+        const user = USERS.find((u) => String(u.login || "").trim().toLowerCase() === wanted || u.role === loginName);
         document.getElementById("login-user").value = user ? user.login : loginName;
         document.getElementById("login-pin").focus();
       }
@@ -370,9 +371,12 @@
         input.focus();
       }
       function login(skipRefresh = false) {
-        const loginName = document.getElementById("login-user").value.trim();
-        const pin = document.getElementById("login-pin").value;
-        const user = USERS.find((u) => u.login === loginName && u.pin === pin);
+        const loginName = document.getElementById("login-user").value.trim().toLowerCase();
+        const pin = String(document.getElementById("login-pin").value || "").trim();
+        const user = USERS.find((u) =>
+          String(u.login || "").trim().toLowerCase() === loginName &&
+          String(u.pin || "").trim() === pin
+        );
         if (!user) {
           if (!skipRefresh && getSheetsUrl() && navigator.onLine !== false) {
             refreshUsersBeforeLogin(false, true);
@@ -412,7 +416,7 @@
           currentUser = null;
         }
         if (currentUser && currentUser.login) {
-          const stored = USERS.find((u) => u.login === currentUser.login);
+          const stored = USERS.find((u) => String(u.login || "").trim().toLowerCase() === String(currentUser.login || "").trim().toLowerCase());
           if (stored) currentUser = { login: stored.login, name: stored.name, role: stored.role };
         }
         if (currentUser) {
@@ -574,7 +578,7 @@
         const pages = getCheckedPages();
         const actions = getCheckedActions();
         if (!loginName || !name || !pin) return toast("⚠ اسم الدخول والاسم والـ PIN مطلوبين");
-        if (USERS.some((u) => u.login === loginName && u.login !== original)) return toast("⚠ اسم الدخول موجود بالفعل");
+        if (USERS.some((u) => String(u.login || "").trim().toLowerCase() === loginName.toLowerCase() && u.login !== original)) return toast("⚠ اسم الدخول موجود بالفعل");
         const payload = { login: loginName, name, pin, role, pages, actions };
         if (original) {
           USERS = USERS.map((u) => (u.login === original ? payload : u));
