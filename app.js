@@ -319,6 +319,45 @@
         input.value = "";
         input.focus();
       }
+      function refreshUsersBeforeLogin(manual = false, retryLogin = false) {
+        const url = getSheetsUrl();
+        if (!url) {
+          if (manual) toast("⚠ لا يوجد رابط Google Sheets محفوظ");
+          return;
+        }
+        if (navigator.onLine === false) {
+          if (manual) toast("⚠ أنت أوفلاين حالياً");
+          return;
+        }
+        const cb = "gs_auth_users_" + Date.now();
+        if (manual) toast("جاري تحديث المستخدمين من الشيت...");
+        window[cb] = (data) => {
+          try {
+            if (data && data.USERS && data.USERS.length) {
+              USERS = data.USERS;
+              localStorage.setItem(USERS_KEY, JSON.stringify(USERS));
+              if (manual) toast("✓ تم تحديث المستخدمين");
+              if (retryLogin) login(true);
+            } else if (manual) {
+              toast("⚠ لم يتم العثور على مستخدمين في الشيت");
+            }
+          } catch (e) {
+            if (manual) toast("⚠ تعذر تحديث المستخدمين");
+          } finally {
+            delete window[cb];
+            document.getElementById(cb)?.remove();
+          }
+        };
+        const s = document.createElement("script");
+        s.id = cb;
+        s.src = url + (url.includes("?") ? "&" : "?") + "action=loadAll&callback=" + cb + "&t=" + Date.now();
+        s.onerror = () => {
+          delete window[cb];
+          s.remove();
+          if (manual) toast("⚠ فشل الاتصال بالشيت");
+        };
+        document.body.appendChild(s);
+      }
       function toggleInputVisibility(inputId, btn) {
         const input = document.getElementById(inputId);
         if (!input) return;
@@ -330,11 +369,15 @@
         }
         input.focus();
       }
-      function login() {
+      function login(skipRefresh = false) {
         const loginName = document.getElementById("login-user").value.trim();
         const pin = document.getElementById("login-pin").value;
         const user = USERS.find((u) => u.login === loginName && u.pin === pin);
         if (!user) {
+          if (!skipRefresh && getSheetsUrl() && navigator.onLine !== false) {
+            refreshUsersBeforeLogin(false, true);
+            return toast("جاري تحديث المستخدمين ثم إعادة المحاولة...");
+          }
           const card = document.querySelector(".auth-card");
           if (card) {
             card.classList.remove("auth-shake");
@@ -3851,4 +3894,5 @@
       initMicroInteractions();
       loadUsers();
       loadDB();
+      refreshUsersBeforeLogin(false, false);
       restoreSession();
